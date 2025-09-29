@@ -90,8 +90,8 @@ def plist_yaml(in_path, out_path):
     else:
         output = convert_to_yaml(normalized)
 
-    out_file = open(out_path, "w")
-    out_file.writelines(output)
+    with open(out_path, "w") as out_file:
+        out_file.writelines(output)
     print("Wrote to : {}\n".format(out_path))
 
 

@@ -51,13 +51,11 @@ def tidy_yaml(in_path, out_path=""):
         return
 
     try:
-        in_file = open(in_path, "r")
+        with open(in_path, "r") as in_file:
+            input_data = safe_load(in_file)
     except IOError:
         print("ERROR: {} not found".format(in_path))
         return
-
-    try:
-        input_data = safe_load(in_file)
     except DuplicateKeyError:
         print("ERROR: Duplicate key found in {}\n".format(in_path))
         return
@@ -73,13 +71,12 @@ def tidy_yaml(in_path, out_path=""):
     if not out_path:
         out_path = in_path
     try:
-        out_file = open(out_path, "w")
+        with open(out_path, "w") as out_file:
+            out_file.writelines(output)
+        print("Wrote to : {}\n".format(out_path))
     except IOError:
         print("ERROR: could not create {} ".format(out_path))
         return
-    else:
-        out_file.writelines(output)
-        print("Wrote to : {}\n".format(out_path))
 
 
 def main():
