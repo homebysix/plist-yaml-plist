@@ -1,0 +1,7 @@
+- id: tidy-autopkg-recipes
+  name: Tidy AutoPkg YAML recipes
+  description: Reorder keys and normalize formatting in *.recipe.yaml files
+  entry: tidy-autopkg-recipes
+  language: python
+  types: [yaml]
+  files: \.recipe\.yaml$

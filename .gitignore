@@ -2,3 +2,8 @@
 *.swp
 .DS_Store
 *.pyc
+
+# build artifacts
+*.egg-info/
+build/
+dist/

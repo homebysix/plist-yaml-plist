@@ -65,13 +65,18 @@ def format_autopkg_recipes(output):
         # convert quoted strings with newlines in them to scalars
         if "\\n" in line:
             spaces = len(line) - len(line.lstrip()) + 2
-            print(spaces)
             space = " "
             line = line.replace(': "', ": |\n{}".format(space * spaces))
+            # protect literal-backslash escape sequences (\\) before
+            # interpreting other YAML double-quote escapes, otherwise
+            # \\n (literal backslash + n) is misread as \n (newline) and
+            # backslashes in shell scripts get doubled on every pass.
+            line = line.replace("\\\\", "\x00")
             line = line.replace("\\t", "    ")
             line = line.replace('\\n"', "")
             line = line.replace("\\n", "\n{}".format(space * spaces))
             line = line.replace('\\"', '"')
+            line = line.replace("\x00", "\\")
             if line[-1] == '"':
                 line[:-1]
         # elif "%" in lines:
@@ -81,5 +86,9 @@ def format_autopkg_recipes(output):
         # print(line)
         recipe.append(line)
     recipe.append("")
-    # print("\n".join(recipe))
-    return "\n".join(recipe)
+    # strip trailing whitespace from every output line so the result stays
+    # idempotent under the standard pre-commit trailing-whitespace hook;
+    # split first because earlier replacements may embed newlines into a
+    # single appended entry (block-scalar conversion).
+    joined = "\n".join(recipe)
+    return "\n".join(out_line.rstrip() for out_line in joined.split("\n"))
