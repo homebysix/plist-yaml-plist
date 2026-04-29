@@ -10,10 +10,21 @@ yaml_tidy.py <input-file>
 The output file can be omitted. In this case, the input file will be overwritten.
 """
 
+import re
 import subprocess
 import sys
 
 from collections import OrderedDict
+
+# YAML 1.1 boolean tokens that look like ordinary strings. ruamel.yaml's
+# default str representer emits these unquoted, which causes safe_load to
+# read them back as booleans. AutoPkg recipes use string values like
+# DERIVE_MIN_OS: 'YES', so we must quote any string that matches.
+_YAML_11_BOOL_RE = re.compile(
+    r"^(y|Y|yes|Yes|YES|n|N|no|No|NO"
+    r"|true|True|TRUE|false|False|FALSE"
+    r"|on|On|ON|off|Off|OFF)$"
+)
 
 try:
     from ruamel.yaml import dump, safe_load, add_representer
@@ -54,9 +65,17 @@ def represent_ordereddict(dumper, data):
     return MappingNode("tag:yaml.org,2002:map", value)
 
 
+def represent_str_bool_safe(dumper, data):
+    """Quote any string that would round-trip as a YAML 1.1 boolean."""
+    if _YAML_11_BOOL_RE.match(data):
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="'")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
 def convert(xml):
     """Do the conversion."""
     add_representer(OrderedDict, represent_ordereddict)
+    add_representer(str, represent_str_bool_safe)
     return dump(xml, width=float("inf"), default_flow_style=False)
 
 
