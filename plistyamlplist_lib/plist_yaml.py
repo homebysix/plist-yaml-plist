@@ -100,7 +100,21 @@ def plist_yaml(in_path, out_path):
 
     # handle conversion of AutoPkg recipes
     if sys.version_info.major == 3 and in_path.endswith((".recipe", ".recipe.plist")):
-        normalized = handle_autopkg_recipes.optimise_autopkg_recipes(normalized)
+        # promote plain dicts to OrderedDict so optimise_autopkg_recipes
+        # can use move_to_end() on them
+        from collections import OrderedDict
+
+        def _to_ordered(value):
+            if isinstance(value, dict):
+                return OrderedDict(
+                    (k, _to_ordered(v)) for k, v in value.items()
+                )
+            if isinstance(value, list):
+                return [_to_ordered(v) for v in value]
+            return value
+
+        normalized = _to_ordered(normalized)
+        handle_autopkg_recipes.optimise_autopkg_recipes(normalized)
         output = convert(normalized)
         output = handle_autopkg_recipes.format_autopkg_recipes(output)
     else:

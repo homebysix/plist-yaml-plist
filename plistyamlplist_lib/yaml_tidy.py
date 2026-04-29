@@ -10,25 +10,13 @@ yaml_tidy.py <input-file>
 The output file can be omitted. In this case, the input file will be overwritten.
 """
 
+import io
 import re
 import subprocess
 import sys
 
-from collections import OrderedDict
-
-# YAML 1.1 boolean tokens that look like ordinary strings. ruamel.yaml's
-# default str representer emits these unquoted, which causes safe_load to
-# read them back as booleans. AutoPkg recipes use string values like
-# DERIVE_MIN_OS: 'YES', so we must quote any string that matches.
-_YAML_11_BOOL_RE = re.compile(
-    r"^(y|Y|yes|Yes|YES|n|N|no|No|NO"
-    r"|true|True|TRUE|false|False|FALSE"
-    r"|on|On|ON|off|Off|OFF)$"
-)
-
 try:
-    from ruamel.yaml import dump, safe_load, add_representer
-    from ruamel.yaml.nodes import MappingNode
+    from ruamel.yaml import YAML
     from ruamel.yaml.constructor import DuplicateKeyError
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "ensurepip", "--user"])
@@ -46,37 +34,45 @@ except ImportError:
             "--user",
         ]
     )
-    from ruamel.yaml import dump, safe_load, add_representer
-    from ruamel.yaml.nodes import MappingNode
+    from ruamel.yaml import YAML
     from ruamel.yaml.constructor import DuplicateKeyError
 
 from . import handle_autopkg_recipes
 
 
-def represent_ordereddict(dumper, data):
-    value = []
-
-    for item_key, item_value in data.items():
-        node_key = dumper.represent_data(item_key)
-        node_value = dumper.represent_data(item_value)
-
-        value.append((node_key, node_value))
-
-    return MappingNode("tag:yaml.org,2002:map", value)
-
-
-def represent_str_bool_safe(dumper, data):
-    """Quote any string that would round-trip as a YAML 1.1 boolean."""
-    if _YAML_11_BOOL_RE.match(data):
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="'")
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+# YAML 1.1 boolean tokens that look like ordinary strings. ruamel's default
+# str representer emits these unquoted, which makes the next load coerce them
+# to booleans. AutoPkg recipes use string values like DERIVE_MIN_OS: 'YES',
+# so we explicitly quote any string that matches.
+_YAML_11_BOOL_RE = re.compile(
+    r"^(y|Y|yes|Yes|YES|n|N|no|No|NO"
+    r"|true|True|TRUE|false|False|FALSE"
+    r"|on|On|ON|off|Off|OFF)$"
+)
 
 
-def convert(xml):
-    """Do the conversion."""
-    add_representer(OrderedDict, represent_ordereddict)
-    add_representer(str, represent_str_bool_safe)
-    return dump(xml, width=float("inf"), default_flow_style=False)
+def _build_yaml():
+    """Build a round-trip YAML instance configured for AutoPkg recipes.
+
+    Round-trip mode preserves comments, blank lines, quote styles, and
+    block scalar styles across load/dump, which is essential for tidying
+    real-world recipes without losing author intent.
+    """
+    yaml = YAML(typ="rt")
+    yaml.width = float("inf")
+    yaml.default_flow_style = False
+    yaml.preserve_quotes = True
+    yaml.indent(mapping=2, sequence=2, offset=0)
+
+    def represent_str_bool_safe(representer, data):
+        if _YAML_11_BOOL_RE.match(data):
+            return representer.represent_scalar(
+                "tag:yaml.org,2002:str", data, style="'"
+            )
+        return representer.represent_scalar("tag:yaml.org,2002:str", data)
+
+    yaml.representer.add_representer(str, represent_str_bool_safe)
+    return yaml
 
 
 def tidy_yaml(in_path, out_path=""):
@@ -91,19 +87,29 @@ def tidy_yaml(in_path, out_path=""):
         print("ERROR: {} not found".format(in_path))
         return
 
+    yaml = _build_yaml()
+
     try:
-        input_data = safe_load(in_file)
+        input_data = yaml.load(in_file)
     except DuplicateKeyError:
         print("ERROR: Duplicate key found in {}\n".format(in_path))
         return
+    finally:
+        in_file.close()
+
+    if input_data is None:
+        return
 
     # handle conversion of AutoPkg recipes
-    if sys.version_info.major == 3 and in_path.endswith(".recipe.yaml"):
-        input_data = handle_autopkg_recipes.optimise_autopkg_recipes(input_data)
-        output = convert(input_data)
+    if in_path.endswith(".recipe.yaml"):
+        handle_autopkg_recipes.optimise_autopkg_recipes(input_data)
+
+    buf = io.StringIO()
+    yaml.dump(input_data, buf)
+    output = buf.getvalue()
+
+    if in_path.endswith(".recipe.yaml"):
         output = handle_autopkg_recipes.format_autopkg_recipes(output)
-    else:
-        output = convert(input_data)
 
     if not out_path:
         out_path = in_path
@@ -112,8 +118,8 @@ def tidy_yaml(in_path, out_path=""):
     except IOError:
         print("ERROR: could not create {} ".format(out_path))
         return
-    else:
-        out_file.writelines(output)
+    with out_file:
+        out_file.write(output)
         print("Wrote to : {}\n".format(out_path))
 
 

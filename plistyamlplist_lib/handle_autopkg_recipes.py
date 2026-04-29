@@ -1,94 +1,77 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from collections import OrderedDict
+
+_DESIRED_ORDER = (
+    "Comment",
+    "Description",
+    "Identifier",
+    "ParentRecipe",
+    "MinimumVersion",
+    "Input",
+    "Process",
+    "ParentRecipeTrustInfo",
+)
+
+_SECTION_HEADERS = ("Input:", "Process:", "ParentRecipeTrustInfo:")
 
 
 def optimise_autopkg_recipes(recipe):
-    """If input is an AutoPkg recipe, optimise the yaml output in 3 ways to aid
-    human readability:
+    """Reorder an AutoPkg recipe in place to aid readability.
 
-    1. Adjust the Processor dictionaries such that the Comment and Arguments keys are
-       moved to the end, ensuring the Processor key is first.
-    2. Ensure the NAME key is the first item in the Input dictionary.
-    3. Order the items such that the Input and Process dictionaries are at the end.
+    Operates on a ruamel.yaml round-trip CommentedMap so that comments,
+    blank lines, and quote/scalar styles are preserved.
+
+    1. In each Process entry, move Comment and Arguments to the end so
+       Processor stays first.
+    2. Move NAME to the front of the Input mapping.
+    3. Reorder top-level keys to the canonical order in _DESIRED_ORDER.
     """
-
-    if "Process" in recipe:
-        process = recipe["Process"]
-        new_process = []
+    process = recipe.get("Process")
+    if process:
         for processor in process:
-            processor = OrderedDict(processor)
             if "Comment" in processor:
                 processor.move_to_end("Comment")
             if "Arguments" in processor:
                 processor.move_to_end("Arguments")
-            new_process.append(processor)
-        recipe["Process"] = new_process
 
-    if "Input" in recipe:
-        input = recipe["Input"]
-        if "NAME" in input:
-            input = OrderedDict(reversed(list(input.items())))
-            input.move_to_end("NAME")
-        recipe["Input"] = OrderedDict(reversed(list(input.items())))
+    input_block = recipe.get("Input")
+    if input_block is not None and "NAME" in input_block:
+        input_block.move_to_end("NAME", last=False)
 
-    desired_order = [
-        "Comment",
-        "Description",
-        "Identifier",
-        "ParentRecipe",
-        "MinimumVersion",
-        "Input",
-        "Process",
-        "ParentRecipeTrustInfo",
-    ]
-    desired_list = [k for k in desired_order if k in recipe]
-    reordered_recipe = {k: recipe[k] for k in desired_list}
-    reordered_recipe = OrderedDict(reordered_recipe)
-    return reordered_recipe
+    for key in _DESIRED_ORDER:
+        if key in recipe:
+            recipe.move_to_end(key)
 
 
 def format_autopkg_recipes(output):
-    """Add lines between Input and Process, and between multiple processes.
-    This aids readability of yaml recipes"""
-    # add line before specific processors
-    for item in ["Input:", "Process:", "- Processor:", "ParentRecipeTrustInfo:"]:
-        output = output.replace(item, "\n" + item)
+    """Ensure a single blank line precedes each top-level recipe section.
 
-    # remove line before first process
-    output = output.replace("Process:\n\n-", "Process:\n-")
-
-    recipe = []
-    lines = output.splitlines()
+    Only operates on column-0 lines so that blank lines inside block
+    scalars (script bodies, descriptions) are left untouched.
+    """
+    lines = output.split("\n")
+    result = []
     for line in lines:
-        # convert quoted strings with newlines in them to scalars
-        if "\\n" in line:
-            spaces = len(line) - len(line.lstrip()) + 2
-            space = " "
-            line = line.replace(': "', ": |\n{}".format(space * spaces))
-            # protect literal-backslash escape sequences (\\) before
-            # interpreting other YAML double-quote escapes, otherwise
-            # \\n (literal backslash + n) is misread as \n (newline) and
-            # backslashes in shell scripts get doubled on every pass.
-            line = line.replace("\\\\", "\x00")
-            line = line.replace("\\t", "    ")
-            line = line.replace('\\n"', "")
-            line = line.replace("\\n", "\n{}".format(space * spaces))
-            line = line.replace('\\"', '"')
-            line = line.replace("\x00", "\\")
-            if line[-1] == '"':
-                line[:-1]
-        # elif "%" in lines:
-        #  handle strings that have AutoPkg %percent% variables in them
-        # (these need to be quoted)
+        is_section_header = (
+            line and not line[0].isspace()
+            and any(line.startswith(k) for k in _SECTION_HEADERS)
+        )
+        is_top_level_processor_item = line.startswith("- Processor:")
 
-        # print(line)
-        recipe.append(line)
-    recipe.append("")
-    # strip trailing whitespace from every output line so the result stays
-    # idempotent under the standard pre-commit trailing-whitespace hook;
-    # split first because earlier replacements may embed newlines into a
-    # single appended entry (block-scalar conversion).
-    joined = "\n".join(recipe)
-    return "\n".join(out_line.rstrip() for out_line in joined.split("\n"))
+        if is_section_header or is_top_level_processor_item:
+            # ensure exactly one blank line between this header and the
+            # previous top-level content (none if this is the first line
+            # or directly follows the parent key)
+            while result and result[-1] == "":
+                result.pop()
+            if result:
+                # don't add a blank line directly after "Process:" before
+                # the very first "- Processor:" entry
+                if is_top_level_processor_item and result[-1].rstrip() == "Process:":
+                    pass
+                else:
+                    result.append("")
+        result.append(line)
+
+    return "\n".join(result)
