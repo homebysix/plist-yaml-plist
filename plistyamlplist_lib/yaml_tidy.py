@@ -40,10 +40,9 @@ except ImportError:
 from . import handle_autopkg_recipes
 
 
-# YAML 1.1 boolean tokens that look like ordinary strings. ruamel's default
-# str representer emits these unquoted, which makes the next load coerce them
-# to booleans. AutoPkg recipes use string values like DERIVE_MIN_OS: 'YES',
-# so we explicitly quote any string that matches.
+# YAML 1.1 boolean tokens that look like ordinary strings. ruamel emits these
+# unquoted by default, so the next load coerces them to booleans. AutoPkg
+# recipes use string values like DERIVE_MIN_OS: 'YES'.
 _YAML_11_BOOL_RE = re.compile(
     r"^(y|Y|yes|Yes|YES|n|N|no|No|NO"
     r"|true|True|TRUE|false|False|FALSE"
@@ -51,75 +50,71 @@ _YAML_11_BOOL_RE = re.compile(
 )
 
 
-def _build_yaml():
+def _represent_str_bool_safe(representer, data):
+    if _YAML_11_BOOL_RE.match(data):
+        return representer.represent_scalar("tag:yaml.org,2002:str", data, style="'")
+    return representer.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+def build_yaml():
     """Build a round-trip YAML instance configured for AutoPkg recipes.
 
     Round-trip mode preserves comments, blank lines, quote styles, and
-    block scalar styles across load/dump, which is essential for tidying
-    real-world recipes without losing author intent.
+    block scalar styles across load/dump.
     """
     yaml = YAML(typ="rt")
     yaml.width = float("inf")
     yaml.default_flow_style = False
     yaml.preserve_quotes = True
     yaml.indent(mapping=2, sequence=2, offset=0)
-
-    def represent_str_bool_safe(representer, data):
-        if _YAML_11_BOOL_RE.match(data):
-            return representer.represent_scalar(
-                "tag:yaml.org,2002:str", data, style="'"
-            )
-        return representer.represent_scalar("tag:yaml.org,2002:str", data)
-
-    yaml.representer.add_representer(str, represent_str_bool_safe)
+    yaml.representer.add_representer(str, _represent_str_bool_safe)
     return yaml
 
 
-def tidy_yaml(in_path, out_path=""):
-    """Tidy up yaml file."""
+def tidy_yaml(in_path, out_path="", yaml=None):
+    """Tidy up yaml file. ``yaml`` may be a pre-built ruamel.yaml YAML
+    instance to avoid per-call construction in batch use."""
     if not in_path.endswith(".yaml"):
         print("Not processing {}\n".format(in_path))
         return
 
+    if yaml is None:
+        yaml = build_yaml()
+
+    is_recipe = in_path.endswith(".recipe.yaml")
+
     try:
-        in_file = open(in_path, "r")
+        with open(in_path, "r") as in_file:
+            input_data = yaml.load(in_file)
     except IOError:
         print("ERROR: {} not found".format(in_path))
         return
-
-    yaml = _build_yaml()
-
-    try:
-        input_data = yaml.load(in_file)
     except DuplicateKeyError:
         print("ERROR: Duplicate key found in {}\n".format(in_path))
         return
-    finally:
-        in_file.close()
 
     if input_data is None:
         return
 
-    # handle conversion of AutoPkg recipes
-    if in_path.endswith(".recipe.yaml"):
+    if is_recipe:
         handle_autopkg_recipes.optimise_autopkg_recipes(input_data)
-
-    buf = io.StringIO()
-    yaml.dump(input_data, buf)
-    output = buf.getvalue()
-
-    if in_path.endswith(".recipe.yaml"):
-        output = handle_autopkg_recipes.format_autopkg_recipes(output)
 
     if not out_path:
         out_path = in_path
+
     try:
         out_file = open(out_path, "w")
     except IOError:
         print("ERROR: could not create {} ".format(out_path))
         return
+
     with out_file:
-        out_file.write(output)
+        if is_recipe:
+            buf = io.StringIO()
+            yaml.dump(input_data, buf)
+            out_file.write(handle_autopkg_recipes.format_autopkg_recipes(buf.getvalue()))
+        else:
+            yaml.dump(input_data, out_file)
         print("Wrote to : {}\n".format(out_path))
 
 
@@ -130,14 +125,7 @@ def main():
         sys.exit(1)
 
     in_path = sys.argv[1]
-
-    try:
-        sys.argv[2]
-    except Exception:
-        out_path = in_path
-    else:
-        out_path = sys.argv[2]
-
+    out_path = sys.argv[2] if len(sys.argv) > 2 else in_path
     tidy_yaml(in_path, out_path)
 
 

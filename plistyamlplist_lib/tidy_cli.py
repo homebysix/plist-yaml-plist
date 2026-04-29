@@ -10,7 +10,7 @@ as positional arguments.
 
 import sys
 
-from .yaml_tidy import tidy_yaml
+from .yaml_tidy import build_yaml, tidy_yaml
 
 
 def main():
@@ -18,11 +18,12 @@ def main():
         print("Usage: tidy-autopkg-recipes <file> [<file> ...]")
         sys.exit(1)
 
+    yaml = build_yaml()
     rc = 0
     for path in sys.argv[1:]:
         try:
-            tidy_yaml(path)
-        except Exception as exc:  # pragma: no cover - surface and continue
+            tidy_yaml(path, yaml=yaml)
+        except Exception as exc:
             print("ERROR tidying {}: {}".format(path, exc), file=sys.stderr)
             rc = 1
     sys.exit(rc)

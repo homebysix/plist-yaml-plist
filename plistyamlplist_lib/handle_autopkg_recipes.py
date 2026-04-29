@@ -13,7 +13,12 @@ _DESIRED_ORDER = (
     "ParentRecipeTrustInfo",
 )
 
-_SECTION_HEADERS = ("Input:", "Process:", "ParentRecipeTrustInfo:")
+_TOP_LEVEL_TRIGGERS = (
+    "Input:",
+    "Process:",
+    "ParentRecipeTrustInfo:",
+    "- Processor:",
+)
 
 
 def optimise_autopkg_recipes(recipe):
@@ -21,11 +26,6 @@ def optimise_autopkg_recipes(recipe):
 
     Operates on a ruamel.yaml round-trip CommentedMap so that comments,
     blank lines, and quote/scalar styles are preserved.
-
-    1. In each Process entry, move Comment and Arguments to the end so
-       Processor stays first.
-    2. Move NAME to the front of the Input mapping.
-    3. Reorder top-level keys to the canonical order in _DESIRED_ORDER.
     """
     process = recipe.get("Process")
     if process:
@@ -47,31 +47,27 @@ def optimise_autopkg_recipes(recipe):
 def format_autopkg_recipes(output):
     """Ensure a single blank line precedes each top-level recipe section.
 
-    Only operates on column-0 lines so that blank lines inside block
-    scalars (script bodies, descriptions) are left untouched.
+    Only operates on column-0 lines so blank lines inside block scalars
+    (script bodies, descriptions) are left untouched.
     """
-    lines = output.split("\n")
     result = []
-    for line in lines:
-        is_section_header = (
-            line and not line[0].isspace()
-            and any(line.startswith(k) for k in _SECTION_HEADERS)
-        )
-        is_top_level_processor_item = line.startswith("- Processor:")
+    for line in output.split("\n"):
+        is_trigger = line.startswith(_TOP_LEVEL_TRIGGERS)
+        if not is_trigger:
+            result.append(line)
+            continue
 
-        if is_section_header or is_top_level_processor_item:
-            # ensure exactly one blank line between this header and the
-            # previous top-level content (none if this is the first line
-            # or directly follows the parent key)
-            while result and result[-1] == "":
-                result.pop()
-            if result:
-                # don't add a blank line directly after "Process:" before
-                # the very first "- Processor:" entry
-                if is_top_level_processor_item and result[-1].rstrip() == "Process:":
-                    pass
-                else:
-                    result.append("")
+        while result and result[-1] == "":
+            result.pop()
+
+        # don't add a blank line directly between "Process:" and its first item
+        is_first_processor = (
+            line.startswith("- Processor:")
+            and result
+            and result[-1].rstrip() == "Process:"
+        )
+        if result and not is_first_processor:
+            result.append("")
         result.append(line)
 
     return "\n".join(result)

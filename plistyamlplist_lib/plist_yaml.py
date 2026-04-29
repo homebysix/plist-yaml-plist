@@ -62,6 +62,16 @@ def represent_ordereddict(dumper, data):
     return MappingNode("tag:yaml.org,2002:map", value)
 
 
+def _to_ordered(value):
+    """Recursively promote dicts to OrderedDict so move_to_end() works
+    when reordering AutoPkg recipe keys."""
+    if isinstance(value, dict):
+        return OrderedDict((k, _to_ordered(v)) for k, v in value.items())
+    if isinstance(value, list):
+        return [_to_ordered(v) for v in value]
+    return value
+
+
 def normalize_types(input_data):
     """This allows YAML and JSON to store Data fields as strings.
 
@@ -100,19 +110,6 @@ def plist_yaml(in_path, out_path):
 
     # handle conversion of AutoPkg recipes
     if sys.version_info.major == 3 and in_path.endswith((".recipe", ".recipe.plist")):
-        # promote plain dicts to OrderedDict so optimise_autopkg_recipes
-        # can use move_to_end() on them
-        from collections import OrderedDict
-
-        def _to_ordered(value):
-            if isinstance(value, dict):
-                return OrderedDict(
-                    (k, _to_ordered(v)) for k, v in value.items()
-                )
-            if isinstance(value, list):
-                return [_to_ordered(v) for v in value]
-            return value
-
         normalized = _to_ordered(normalized)
         handle_autopkg_recipes.optimise_autopkg_recipes(normalized)
         output = convert(normalized)
